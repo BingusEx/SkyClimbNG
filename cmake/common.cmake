@@ -160,8 +160,6 @@ macro(add_project)
 		target_link_options(
 			"${PROJECT_NAME}"
 			PRIVATE
-				/WX	# Treat Linker Warnings as Errors
-
 				"$<$<CONFIG:DEBUG>:/INCREMENTAL;/OPT:NOREF;/OPT:NOICF>"
 				"$<$<CONFIG:RELEASE>:/INCREMENTAL:NO;/OPT:REF;/OPT:ICF;/DEBUG:FULL>"
 		)
@@ -179,50 +177,4 @@ macro(add_project)
 		unset("${_VAR}")
 	endforeach()
 	unset(_CLEANUP)
-endmacro()
-
-macro(copy_files)
-	if(NOT "${ARGC}" GREATER 0)
-		message(FATAL_ERROR "Invalid number of arguments.")
-	endif()
-
-	math(EXPR _REMAINDER "${ARGC} % 2")
-	if(NOT _REMAINDER EQUAL 0)
-		message(FATAL_ERROR "Arguments must be paired as a file + path spec.")
-	endif()
-
-	option(COPY_BUILD "Copy the build output to the Skyrim directory." OFF)
-
-	set(_ARGS "${ARGN}")
-
-	if(COPY_BUILD)
-		set_from_environment(Skyrim64Path)
-		if(DEFINED Skyrim64Path)
-			math(EXPR _PAIRS "${ARGC} / 2 - 1")
-			foreach(_IDX RANGE "${_PAIRS}")
-				math(EXPR _IDX "${_IDX} * 2")
-				math(EXPR _IDXN "${_IDX} + 1")
-
-				list(GET _ARGS "${_IDX}" _FROM)
-				list(GET _ARGS "${_IDXN}" _TO)
-
-				cmake_path(SET _TO NORMALIZE "${Skyrim64Path}/${_TO}")
-
-				add_custom_command(
-					TARGET "${PROJECT_NAME}"
-					POST_BUILD
-					COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${_FROM}" "${_TO}"
-				)
-			endforeach()
-		else()
-			message(WARNING "Variable Skyrim64Path is not defined. Skipping post-build copy command.")
-		endif()
-	endif()
-
-	unset(_ARGS)
-	unset(_REMAINDER)
-	unset(_IDX)
-	unset(_IDXN)
-	unset(_FROM)
-	unset(_TO)
 endmacro()

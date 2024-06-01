@@ -2,36 +2,23 @@
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#define _USE_MATH_DEFINES
 
 #include <spdlog/sinks/basic_file_sink.h>
+#include <RE/Skyrim.h>
+#include <REL/Relocation.h>
+#include <SKSE/SKSE.h>
 
-#include "RE/Skyrim.h"
-#include "SKSE/SKSE.h"
+#undef cdecl  // Workaround for Clang 14 CMake configure error.
 
+// Compatible declarations with other sample projects.
 #define DLLEXPORT __declspec(dllexport)
 
+using namespace std::literals;
+using namespace REL::literals;
+
 namespace logger = SKSE::log;
-namespace WinAPI = SKSE::WinAPI;
 
-#ifdef SKYRIM_AE
-    #define OFFSET(se, ae) ae
-    #define OFFSET_3(se, ae, vr) ae
-#elif SKYRIMVR
-    #define OFFSET(se, ae) se
-    #define OFFSET_3(se, ae, vr) vr
-#else
-    #define OFFSET(se, ae) se
-    #define OFFSET_3(se, ae, vr) se
-#endif
-
-#include "Version.h"
-
-namespace stl {
-    template <class T>
-    void write_thunk_call(std::uintptr_t a_src) {
-        SKSE::AllocTrampoline(14);
-
-        auto& trampoline = SKSE::GetTrampoline();
-        T::func = trampoline.write_call<5>(a_src, T::thunk);
-    }
+namespace util {
+    using SKSE::stl::report_and_fail;
 }

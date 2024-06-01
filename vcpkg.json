@@ -1,14 +1,17 @@
 {
     "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
     "name": "sky-climb",
-    "version-string": "1.2.0",
+    "version-string": "1.3.0",
     "dependencies": [
       "boost-stl-interfaces",
+      "rapidcsv",
       "frozen",
       "rsm-binary-io",
       "srell",
       "spdlog",
-      "xbyak"
+      "xbyak",
+      "directxtk",
+      "tomlplusplus"
     ],
     "overrides": [
       {

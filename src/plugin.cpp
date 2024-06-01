@@ -1,99 +1,19 @@
-namespace logger = SKSE::log;
+#include "Plugin.h"
+#include "Util.h"
 
-void SetupLog() {
-    auto logsFolder = SKSE::log::log_directory();
-    if (!logsFolder) SKSE::stl::report_and_fail("SKSE log_directory not provided, logs disabled.");
+//-------------------
+//  Utility
+//-------------------
 
-    auto pluginName = "SkyClimb";
-    auto logFilePath = *logsFolder / std::format("{}.log", pluginName);
-    auto fileLoggerPtr = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logFilePath.string(), true);
-    auto loggerPtr = std::make_shared<spdlog::logger>("log", std::move(fileLoggerPtr));
-
-    spdlog::set_default_logger(std::move(loggerPtr));
-    spdlog::set_level(spdlog::level::info);
-    spdlog::flush_on(spdlog::level::info);
-
-    spdlog::set_pattern("%v");
-}
-
-/*
-void SetupLog() {
-    auto logsFolder = SKSE::log::log_directory();
-    if (!logsFolder) SKSE::stl::report_and_fail("SKSE log_directory not provided, logs disabled.");
-    auto pluginName = SKSE::PluginDeclaration::GetSingleton()->GetName();
-    auto logFilePath = *logsFolder / std::format("{}.log", pluginName);
-    auto fileLoggerPtr = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logFilePath.string(), true);
-    auto loggerPtr = std::make_shared<spdlog::logger>("log", std::move(fileLoggerPtr));
-    spdlog::set_default_logger(std::move(loggerPtr));
-    spdlog::set_level(spdlog::level::trace);
-    spdlog::flush_on(spdlog::level::trace);
-}
-*/
-
-/*
-struct OurEventSink : public RE::BSTEventSink<SKSE::CameraEvent> {
-    RE::BSEventNotifyControl ProcessEvent(const SKSE::CameraEvent* event, RE::BSTEventSource<SKSE::CameraEvent> *) {
-        
-        
-        RE::TESCameraState *furnitureState = RE::PlayerCamera::GetSingleton()->cameraStates[5].get();
-
-        if (event->newState->id == furnitureState->id) {
-            
-             RE::PlayerCamera::GetSingleton()->SetState(event->oldState);
-             logger::info("Camera state reverted");
-        }
-        
-        
-        return RE::BSEventNotifyControl::kContinue;
-
-
-
-    }
-};
-*/
-
-std::string SayHello(RE::StaticFunctionTag *) { 
-
-    return "Hello from SkyClimb 6!"; 
-}
-
-
-
-RE::NiPoint3 CameraDirInternal() {
-
-    const auto worldCamera = RE::Main::WorldRootCamera();
-
-    
-
-    RE::NiPoint3 output;
-    output.x = worldCamera->world.rotate.entry[0][0];
-    output.y = worldCamera->world.rotate.entry[1][0];
-    output.z = worldCamera->world.rotate.entry[2][0];
-
-    return output;
-}
-
-float getSign(float x) {
-    if (x < 0) return -1;
-    else return 1;
-}
-
-void ToggleJumpingInternal(bool enabled) {
-    RE::ControlMap::GetSingleton()->ToggleControls(RE::ControlMap::UEFlag::kJumping, enabled);
-}
-
-void ToggleJumping(RE::StaticFunctionTag *, bool enabled) { ToggleJumpingInternal(enabled); }
-
-void EndAnimationEarly(RE::StaticFunctionTag *, RE::TESObjectREFR *objectRef) {
-    objectRef->NotifyAnimationGraph("IdleFurnitureExit");
-}
-
+float PlayerScale = 1.0f;
 
 //camera versus head 'to object angle'. Angle between the vectors 'camera to object' and 'player head to object'
-float CameraVsHeadToObjectAngle(RE::NiPoint3 objPoint) {
+float CameraVsHeadToObjectAngle(RE::NiPoint3 a_point) {
     const auto player = RE::PlayerCharacter::GetSingleton();
 
-    RE::NiPoint3 playerToObject = objPoint - (player->GetPosition() + RE::NiPoint3(0, 0, 120));
+    if (!player) return 1.0f;
+
+    RE::NiPoint3 playerToObject = a_point - (player->GetPosition() + RE::NiPoint3(0, 0, 120));
 
     playerToObject /= playerToObject.Length();
 
@@ -101,38 +21,36 @@ float CameraVsHeadToObjectAngle(RE::NiPoint3 objPoint) {
 
     float dot = playerToObject.Dot(camDir);
 
-    const float radToDeg = (float)57.2958;
+    constexpr float radToDeg = 57.2958f;
 
     return acos(dot) * radToDeg;
 }
 
+float RayCast(RE::NiPoint3 a_start, RE::NiPoint3 a_dir, float a_maxDist, RE::hkVector4 &a_normalOut, bool a_logLayer, RE::COL_LAYER a_layerMask) {
 
-
-float RayCast(RE::NiPoint3 rayStart, RE::NiPoint3 rayDir, float maxDist, RE::hkVector4 &normalOut, bool logLayer, RE::COL_LAYER layerMask) {
-
-    RE::NiPoint3 rayEnd = rayStart + rayDir * maxDist;
+    RE::NiPoint3 rayEnd = a_start + a_dir * a_maxDist;
 
     const auto bhkWorld = RE::PlayerCharacter::GetSingleton()->GetParentCell()->GetbhkWorld();
     if (!bhkWorld) {
-        return maxDist;
+        return a_maxDist;
     }
 
     RE::bhkPickData pickData;
 
     const auto havokWorldScale = RE::bhkWorld::GetWorldScale();
 
-    pickData.rayInput.from = rayStart * havokWorldScale;
+    pickData.rayInput.from = a_start * havokWorldScale;
     pickData.rayInput.to = rayEnd * havokWorldScale;
     pickData.rayInput.enableShapeCollectionFilter = false;
-    pickData.rayInput.filterInfo = RE::bhkCollisionFilter::GetSingleton()->GetNewSystemGroup() << 16 | SKSE::stl::to_underlying(layerMask);
+    pickData.rayInput.filterInfo = RE::bhkCollisionFilter::GetSingleton()->GetNewSystemGroup() << 16 | std::to_underlying(a_layerMask);
 
     if (bhkWorld->PickObject(pickData); pickData.rayOutput.HasHit()) {
 
-        normalOut = pickData.rayOutput.normal;
+        a_normalOut = pickData.rayOutput.normal;
 
         uint32_t layerIndex = pickData.rayOutput.rootCollidable->broadPhaseHandle.collisionFilterInfo & 0x7F;
 
-        if (logLayer) logger::info("layer hit: {}", layerIndex);
+        if (a_logLayer) logger::info("layer hit: {}", layerIndex);
 
         //fail if hit a character
         switch (static_cast<RE::COL_LAYER>(layerIndex)) {
@@ -144,7 +62,7 @@ float RayCast(RE::NiPoint3 rayStart, RE::NiPoint3 rayDir, float maxDist, RE::hkV
             case RE::COL_LAYER::kClutter:
 
                 // hit something useful!
-                return maxDist * pickData.rayOutput.hitFraction;
+                return a_maxDist * pickData.rayOutput.hitFraction;
 
             default: {
                 return -1;
@@ -154,79 +72,33 @@ float RayCast(RE::NiPoint3 rayStart, RE::NiPoint3 rayDir, float maxDist, RE::hkV
 
     }
 
-    if (logLayer) logger::info("nothing hit");
+    if (a_logLayer) logger::info("nothing hit");
 
-    normalOut = RE::hkVector4(0, 0, 0, 0);
+    a_normalOut = RE::hkVector4(0, 0, 0, 0);
 
     //didn't hit anything!
-    return maxDist;
+    return a_maxDist;
 }
 
+//-------------------
+//  Main
+//-------------------
 
-float magnitudeXY(float x, float y) {
-
-    return sqrt(x * x + y * y);
-
-}
-
-
-
-bool PlayerIsGrounded() {
+int LedgeCheck(RE::NiPoint3 &a_ledgePoint, RE::NiPoint3 a_checkDir, float a_minLedgeHeight, float a_maxLedgeHeight) {
 
     const auto player = RE::PlayerCharacter::GetSingleton();
+    if (!player) return 0;
+
     const auto playerPos = player->GetPosition();
 
-    RE::hkVector4 normalOut(0, 0, 0, 0);
-
-    // grounded check
-    float groundedCheckDist = 128 + 20;
-
-    RE::NiPoint3 groundedRayStart;
-    groundedRayStart.x = playerPos.x;
-    groundedRayStart.y = playerPos.y;
-    groundedRayStart.z = playerPos.z + 128;
-
-    RE::NiPoint3 groundedRayDir(0, 0, -1);
-
-    float groundedRayDist = RayCast(groundedRayStart, groundedRayDir, groundedCheckDist, normalOut, false, RE::COL_LAYER::kLOS);
-
-    if (groundedRayDist == groundedCheckDist || groundedRayDist == -1) {
-        return false;
-    }
-
-    return true;
-
-}
-
-bool PlayerIsInWater() {
-
-    const auto player = RE::PlayerCharacter::GetSingleton();
-    const auto playerPos = player->GetPosition();
-
-    // temp water swimming fix
-    float waterLevel;
-    player->GetParentCell()->GetWaterHeight(playerPos, waterLevel);
-
-    if (playerPos.z - waterLevel < -50) {
-        return true;
-    }
-
-    return false;
-}
-
-
-int LedgeCheck(RE::NiPoint3 &ledgePoint, RE::NiPoint3 checkDir, float minLedgeHeight, float maxLedgeHeight) {
-
-    const auto player = RE::PlayerCharacter::GetSingleton();
-    const auto playerPos = player->GetPosition();
 
     float startZOffset = 100;  // how high to start the raycast above the feet of the player
-    float playerHeight = 120;  // how much headroom is needed
+    float playerHeight = 120 * PlayerScale;  // how much headroom is needed
     float minUpCheck = 100;    // how low can the roof be relative to the raycast starting point?
-    float maxUpCheck = (maxLedgeHeight - startZOffset) + 20;  // how high do we even check for a roof?
+    float maxUpCheck = (a_maxLedgeHeight - startZOffset) + 20 * PlayerScale;  // how high do we even check for a roof?
     float fwdCheck = 10; // how much each incremental forward check steps forward
-    int fwdCheckIterations = 12;  // how many incremental forward checks do we make?
-    float minLedgeFlatness = 0.5;  // 1 is perfectly flat, 0 is completely perpendicular
+    int fwdCheckIterations = 15;  // how many incremental forward checks do we make?
+    float minLedgeFlatness = 0.7f;  // 1 is perfectly flat, 0 is completely perpendicular
 
     RE::hkVector4 normalOut(0, 0, 0, 0);
 
@@ -246,7 +118,6 @@ int LedgeCheck(RE::NiPoint3 &ledgePoint, RE::NiPoint3 checkDir, float minLedgeHe
 
     RE::NiPoint3 fwdRayStart = upRayStart + upRayDir * (upRayDist - 10);
 
-    RE::NiPoint3 downRayStart;
     RE::NiPoint3 downRayDir(0, 0, -1);
 
     bool foundLedge = false;
@@ -256,32 +127,30 @@ int LedgeCheck(RE::NiPoint3 &ledgePoint, RE::NiPoint3 checkDir, float minLedgeHe
     for (int i = 0; i < fwdCheckIterations; i++) {
         // raycast forward
 
-        float fwdRayDist = RayCast(fwdRayStart, checkDir, fwdCheck * (float)i, normalOut, false, RE::COL_LAYER::kLOS);
+        float fwdRayDist = RayCast(fwdRayStart, a_checkDir, fwdCheck * static_cast<float>(i), normalOut, false, RE::COL_LAYER::kLOS);
 
-        if (fwdRayDist < fwdCheck * (float)i) {
+        if (fwdRayDist < fwdCheck * static_cast<float>(i)) {
             continue;
         }
 
         // if nothing forward, raycast back down
 
-        downRayStart = fwdRayStart + checkDir * fwdRayDist;
+        RE::NiPoint3 downRayStart = fwdRayStart + a_checkDir * fwdRayDist;
 
-        float downRayDist =
-            RayCast(downRayStart, downRayDir, startZOffset + maxUpCheck, normalOut, false, RE::COL_LAYER::kLOS);
+        float downRayDist = RayCast(downRayStart, downRayDir, startZOffset + maxUpCheck, normalOut, false, RE::COL_LAYER::kLOS);
 
-        ledgePoint = downRayStart + downRayDir * downRayDist;
+        a_ledgePoint = downRayStart + downRayDir * downRayDist;
 
         float normalZ = normalOut.quad.m128_f32[2];
 
         // if found ledgePoint is too low/high, or the normal is too steep, or the ray hit oddly soon, skip and
         // increment forward again
-        if (ledgePoint.z < playerPos.z + minLedgeHeight || ledgePoint.z > playerPos.z + maxLedgeHeight ||
+        if (a_ledgePoint.z < playerPos.z + a_minLedgeHeight || a_ledgePoint.z > playerPos.z + a_maxLedgeHeight ||
             downRayDist < 10 || normalZ < minLedgeFlatness) {
             continue;
-        } else {
-            foundLedge = true;
-            break;
         }
+        foundLedge = true;
+        break;
     }
 
     // if no ledge found, return false
@@ -292,7 +161,7 @@ int LedgeCheck(RE::NiPoint3 &ledgePoint, RE::NiPoint3 checkDir, float minLedgeHe
     // make sure player can stand on top
     float headroomBuffer = 10;
 
-    RE::NiPoint3 headroomRayStart = ledgePoint + upRayDir * headroomBuffer;
+    RE::NiPoint3 headroomRayStart = a_ledgePoint + upRayDir * headroomBuffer;
 
     float headroomRayDist = RayCast(headroomRayStart, upRayDir, playerHeight - headroomBuffer, normalOut, false, RE::COL_LAYER::kLOS);
 
@@ -300,34 +169,33 @@ int LedgeCheck(RE::NiPoint3 &ledgePoint, RE::NiPoint3 checkDir, float minLedgeHe
         return -1;
     }
 
-    if (ledgePoint.z - playerPos.z < 175) {
+    if (a_ledgePoint.z - playerPos.z < 175 * PlayerScale) {
         return 1;
-    } else {
-        return 2;
     }
+    return 2;
 }
 
-int VaultCheck(RE::NiPoint3 &ledgePoint, RE::NiPoint3 checkDir, float vaultLength, float maxElevationIncrease, float minVaultHeight, float maxVaultHeight) {
+int VaultCheck(RE::NiPoint3 &a_ledgePoint, RE::NiPoint3 a_checkDir, float a_vaultLength, float a_maxElevationIncrease, float a_minVaultHeight, float a_maxVaultHeight) {
 
     const auto player = RE::PlayerCharacter::GetSingleton();
     const auto playerPos = player->GetPosition();
 
     RE::hkVector4 normalOut(0, 0, 0, 0);
 
-    float headHeight = 120;
+    float headHeight = 120 * PlayerScale;
 
     RE::NiPoint3 fwdRayStart;
     fwdRayStart.x = playerPos.x;
     fwdRayStart.y = playerPos.y;
     fwdRayStart.z = playerPos.z + headHeight;
 
-    float fwdRayDist = RayCast(fwdRayStart, checkDir, vaultLength, normalOut, false, RE::COL_LAYER::kLOS);
+    float fwdRayDist = RayCast(fwdRayStart, a_checkDir, a_vaultLength, normalOut, false, RE::COL_LAYER::kLOS);
 
-    if (fwdRayDist < vaultLength) {
+    if (fwdRayDist < a_vaultLength) {
         return -1;
     }
 
-    int downIterations = (int)std::floor(vaultLength / 5.0f);
+    int downIterations = static_cast<int>(std::floor(a_vaultLength / 5.0f));
 
     RE::NiPoint3 downRayDir(0, 0, -1);
 
@@ -339,9 +207,9 @@ int VaultCheck(RE::NiPoint3 &ledgePoint, RE::NiPoint3 checkDir, float vaultLengt
 
     for (int i = 0; i < downIterations; i++) {
 
-        float iDist = (float)i * 5;
+        float iDist = static_cast<float>(i) * 5;
         
-        RE::NiPoint3 downRayStart = playerPos + checkDir * iDist;
+        RE::NiPoint3 downRayStart = playerPos + a_checkDir * iDist;
         downRayStart.z = fwdRayStart.z;
 
 
@@ -349,18 +217,18 @@ int VaultCheck(RE::NiPoint3 &ledgePoint, RE::NiPoint3 checkDir, float vaultLengt
 
         float hitHeight = (fwdRayStart.z - downRayDist) - playerPos.z;
 
-        if (hitHeight > maxVaultHeight) {
+        if (hitHeight > a_maxVaultHeight) {
             return -1;
         }
-        else if (hitHeight > minVaultHeight && hitHeight < maxVaultHeight) {
+        else if (hitHeight > a_minVaultHeight && hitHeight < a_maxVaultHeight) {
             if (hitHeight >= foundVaultHeight) {
                 foundVaultHeight = hitHeight;
                 foundLanding = false;
             }
-            ledgePoint = downRayStart + downRayDir * downRayDist;
+            a_ledgePoint = downRayStart + downRayDir * downRayDist;
             foundVaulter = true;
         } 
-        else if (foundVaulter && hitHeight < minVaultHeight) {
+        else if (foundVaulter && hitHeight < a_minVaultHeight) {
             if (hitHeight < foundLandingHeight || foundLanding == false) {
                 foundLandingHeight = hitHeight;
             }
@@ -371,34 +239,24 @@ int VaultCheck(RE::NiPoint3 &ledgePoint, RE::NiPoint3 checkDir, float vaultLengt
 
     }
 
-    if (foundVaulter && foundLanding && foundLandingHeight < maxElevationIncrease) {
-        ledgePoint.z = playerPos.z + foundVaultHeight;
+    if (foundVaulter && foundLanding && foundLandingHeight < a_maxElevationIncrease) {
+        a_ledgePoint.z = playerPos.z + foundVaultHeight;
 
         if (foundLandingHeight < -10) {
             return 4;
         }
-
         return 3;
-        
-        
     }
 
     return -1;
-
-
-
 }
 
-
 int GetLedgePoint(RE::TESObjectREFR *vaultMarkerRef, RE::TESObjectREFR *medMarkerRef, RE::TESObjectREFR *highMarkerRef, RE::TESObjectREFR *indicatorRef, bool enableVaulting, bool enableLedges) { 
-    
-    
     const auto player = RE::PlayerCharacter::GetSingleton();
-    const auto playerPos = player->GetPosition();
 
     RE::NiPoint3 cameraDir = CameraDirInternal();
 
-    float cameraDirTotal = magnitudeXY(cameraDir.x, cameraDir.y);
+    float cameraDirTotal = MagnitudeXY(cameraDir.x, cameraDir.y);
     RE::NiPoint3 cameraDirFlat;
     cameraDirFlat.x = cameraDir.x / cameraDirTotal;
     cameraDirFlat.y = cameraDir.y / cameraDirTotal;
@@ -408,13 +266,13 @@ int GetLedgePoint(RE::TESObjectREFR *vaultMarkerRef, RE::TESObjectREFR *medMarke
     RE::NiPoint3 ledgePoint;
 
     if (enableLedges) {
-        selectedLedgeType = LedgeCheck(ledgePoint, cameraDirFlat, 110, 250);
+        selectedLedgeType = LedgeCheck(ledgePoint, cameraDirFlat, 110 * PlayerScale, 250 * PlayerScale);
     }
 
     if (selectedLedgeType == -1) {
 
         if (enableVaulting) {
-            selectedLedgeType = VaultCheck(ledgePoint, cameraDirFlat, 120, 10, 50, 100);
+            selectedLedgeType = VaultCheck(ledgePoint, cameraDirFlat, 120, 10, 50 * PlayerScale, 100 * PlayerScale);
         }
 
         if (selectedLedgeType == -1)
@@ -423,21 +281,12 @@ int GetLedgePoint(RE::TESObjectREFR *vaultMarkerRef, RE::TESObjectREFR *medMarke
         }
     }
 
-
-    // if camera facing too far away from ledgepoint
-    if (CameraVsHeadToObjectAngle(ledgePoint) > 80) {
-        return -1;
-    }
-
-
     // rotate to face camera
     float zAngle = atan2(cameraDirFlat.x, cameraDirFlat.y);
 
-
     //it seems we have to MoveTo first in order to get the references into the same cell
 
-    if (indicatorRef->GetParentCell() != player->GetParentCell())
-    {
+    if (indicatorRef->GetParentCell() != player->GetParentCell()){
         indicatorRef->MoveTo(player->AsReference());
     }
 
@@ -454,20 +303,19 @@ int GetLedgePoint(RE::TESObjectREFR *vaultMarkerRef, RE::TESObjectREFR *medMarke
 
     //pick a ledge type
 
-
     if (selectedLedgeType == 1) {
         ledgeMarker = medMarkerRef;
-        zAdjust = -155;
+        zAdjust = -155 * PlayerScale;
         toCameraAdjust = -50;
     } 
     else if (selectedLedgeType == 2) {
         ledgeMarker = highMarkerRef;
-        zAdjust = -200;
+        zAdjust = -200 * PlayerScale;
         toCameraAdjust = -50;
     }
     else {
         ledgeMarker = vaultMarkerRef;
-        zAdjust = -60;
+        zAdjust = -60 * PlayerScale;
         toCameraAdjust = -80;
     }
 
@@ -475,7 +323,7 @@ int GetLedgePoint(RE::TESObjectREFR *vaultMarkerRef, RE::TESObjectREFR *medMarke
     RE::NiPoint3 adjustedPos;
     adjustedPos.x = ledgePoint.x + cameraDirFlat.x * toCameraAdjust;
     adjustedPos.y = ledgePoint.y + cameraDirFlat.y * toCameraAdjust;
-    adjustedPos.z = ledgePoint.z + zAdjust;
+    adjustedPos.z = ledgePoint.z + zAdjust + (12 * PlayerScale);
 
     if (ledgeMarker->GetParentCell() != player->GetParentCell()) {
         ledgeMarker->MoveTo(player->AsReference());
@@ -484,20 +332,77 @@ int GetLedgePoint(RE::TESObjectREFR *vaultMarkerRef, RE::TESObjectREFR *medMarke
     ledgeMarker->SetPosition(adjustedPos);
 
     ledgeMarker->data.angle = RE::NiPoint3(0, 0, zAngle);
-    
-
 
     return selectedLedgeType;
 
+}
 
+//-------------------
+//  Character State
+//-------------------
+
+bool PlayerIsGrounded() {
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    if (!player) return false;
+    const auto playerPos = player->GetPosition();
+
+    RE::hkVector4 normalOut(0, 0, 0, 0);
+
+    // grounded check
+    float groundedCheckDist = 128 + 20;
+
+    RE::NiPoint3 groundedRayStart;
+    groundedRayStart.x = playerPos.x;
+    groundedRayStart.y = playerPos.y;
+    groundedRayStart.z = playerPos.z + 128;
+
+    RE::NiPoint3 groundedRayDir(0, 0, -1);
+
+    float groundedRayDist =
+        RayCast(groundedRayStart, groundedRayDir, groundedCheckDist, normalOut, false, RE::COL_LAYER::kLOS);
+
+    if (groundedRayDist == groundedCheckDist || groundedRayDist == -1) {
+        return false;
+    }
+
+    return true;
+}
+
+bool PlayerIsInWater() {
+    const auto player = RE::PlayerCharacter::GetSingleton();
+    if (auto actorState = player->AsActorState()) {
+        if (actorState->IsSwimming()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
+//-------------------
+//  VM Functions
+//-------------------
+
+std::string SayHello(RE::StaticFunctionTag *) {
+    return fmt::format("Skyclimb {}.{}.{}", Plugin::VERSION.major(), Plugin::VERSION.minor(), Plugin::VERSION.patch());
+}
+
+void ToggleJumping(RE::StaticFunctionTag *, bool enabled) {
+    ToggleJumpingInternal(enabled);
+}
+
+void EndAnimationEarly(RE::StaticFunctionTag *, RE::TESObjectREFR *objectRef) {
+    objectRef->NotifyAnimationGraph("IdleFurnitureExit");
 }
 
 int UpdateParkourPoint(RE::StaticFunctionTag *, RE::TESObjectREFR *vaultMarkerRef, RE::TESObjectREFR *medMarkerRef, RE::TESObjectREFR *highMarkerRef, RE::TESObjectREFR *indicatorRef, bool useJumpKey, bool enableVaulting, bool enableLedges) {
-    
+
     if (PlayerIsGrounded() == false || PlayerIsInWater() == true) {
         return -1;
     }
 
+
+    PlayerScale = GetScale();
     int foundLedgeType = GetLedgePoint(vaultMarkerRef, medMarkerRef, highMarkerRef, indicatorRef, enableVaulting, enableLedges);
 
     if (useJumpKey) {
@@ -511,62 +416,71 @@ int UpdateParkourPoint(RE::StaticFunctionTag *, RE::TESObjectREFR *vaultMarkerRe
     return foundLedgeType;
 }
 
+//-------------------
+//  Init
+//-------------------
 
-bool PapyrusFunctions(RE::BSScript::IVirtualMachine * vm) { 
+void SetupLog() {
+    auto logsFolder = SKSE::log::log_directory();
+    if (!logsFolder) SKSE::stl::report_and_fail("SKSE log_directory not provided, logs disabled.");
+
+    auto pluginName = "SkyClimb";
+    auto logFilePath = *logsFolder / std::format("{}.log", pluginName);
+    auto fileLoggerPtr = std::make_shared<spdlog::sinks::basic_file_sink_mt>(logFilePath.string(), true);
+    auto loggerPtr = std::make_shared<spdlog::logger>("log", std::move(fileLoggerPtr));
+
+    set_default_logger(std::move(loggerPtr));
+    spdlog::set_level(spdlog::level::info);
+    spdlog::flush_on(spdlog::level::info);
+    spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] [%t] [%s:%#] %v");
+}
+
+bool RegisterPapyrus(RE::BSScript::IVirtualMachine * vm) { 
     vm->RegisterFunction("SayHello", "SkyClimbPapyrus", SayHello);
-
     vm->RegisterFunction("ToggleJumping", "SkyClimbPapyrus", ToggleJumping);
-
     vm->RegisterFunction("EndAnimationEarly", "SkyClimbPapyrus", EndAnimationEarly);
-
     vm->RegisterFunction("UpdateParkourPoint", "SkyClimbPapyrus", UpdateParkourPoint);
 
-    
     return true; 
 }
 
-extern "C" DLLEXPORT constinit auto SKSEPlugin_Version = []() {
+//-------------------
+//  SKSE Exports
+//-------------------
+
+extern "C" DLLEXPORT constinit auto SKSEPlugin_Version = [] {
     SKSE::PluginVersionData v;
-    v.PluginVersion({Version::MAJOR, Version::MINOR, Version::PATCH});
+    v.PluginVersion(Plugin::VERSION);
     v.PluginName("SkyClimb");
     v.AuthorName("Sokco");
-    v.UsesAddressLibrary();
-    v.UsesUpdatedStructs();
-    v.CompatibleVersions({SKSE::RUNTIME_1_6_1130, 
-        {(unsigned short)1U, (unsigned short)6U, (unsigned short)1170U, (unsigned short)0U}});
-
+    v.UsesAddressLibrary(true);
+    v.CompatibleVersions({SKSE::RUNTIME_SSE_LATEST});
+    v.HasNoStructUse(true);
     return v;
 }();
 
 extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface *a_skse) {
     SetupLog();
-
-    SKSE::Init(a_skse);
-    logger::info("SkyClimb Papyrus Started!");
-    SKSE::GetPapyrusInterface()->Register(PapyrusFunctions);
-
-    return true;
+    Init(a_skse);
+    bool res = SKSE::GetPapyrusInterface()->Register(RegisterPapyrus);
+    logger::info(FMT_STRING("Papyrus Registered: {}"), res);
+    return res;
 }
 
-/*
-SKSEPluginLoad(const SKSE::LoadInterface *skse) {
-    SKSE::Init(skse);
+extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface *a_skse, SKSE::PluginInfo *a_info) {
+    a_info->infoVersion = SKSE::PluginInfo::kVersion;
+    a_info->name = Plugin::NAME.data();
+    a_info->version = Plugin::VERSION.pack();
 
-    //////// PLUGIN START /////////
+    if (a_skse->IsEditor()) {
+        // logger::critical("Loaded in editor, marking as incompatible"sv);
+        return false;
+    }
 
-
-    SetupLog();
-    logger::info("SkyClimb Papyrus Started!");
-
-    SKSE::GetPapyrusInterface()->Register(PapyrusFunctions);
-
-
-    //auto *eventSink = new OurEventSink();
-
-    //SKSE::GetCameraEventSource()->AddEventSink(eventSink);
-
-    //////// PLUGIN END /////////
-
+    const auto ver = a_skse->RuntimeVersion();
+    if (ver < SKSE::RUNTIME_SSE_1_5_97) {
+        logger::critical(FMT_STRING("Unsupported runtime version {}"), ver.string());
+        return false;
+    }
     return true;
 }
-*/
